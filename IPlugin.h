@@ -55,6 +55,11 @@ public:
         return plugin_id;
     }
 
+    string getVersion()
+    {
+        return plugin_version;
+    }
+
     // virtual void init(string id, bool force_update) = 0;
     void init(string id, bool force_update)
     {
@@ -92,7 +97,7 @@ public:
         manager.wait_all();
     }
 
-    virtual vector<unordered_map<string, string>> search(string keyword) = 0;
+    virtual vector<string> search(string keyword) = 0;
 
 protected:
     string site_name;
@@ -100,6 +105,7 @@ protected:
     string site_domain;
     string plugin_id;
     string plugin_name;
+    string plugin_version;
 
     string id;
     string title;

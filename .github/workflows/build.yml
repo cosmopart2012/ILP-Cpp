@@ -83,24 +83,11 @@ jobs:
 
             - name: Create GitHub Release
               uses: softprops/action-gh-release@v2
+              if: startsWith(github.ref, 'refs/tags/')
               with:
                   tag_name: ${{ github.ref_name }}
                   name: "Release ${{ github.ref_name }}"
-                  body: |
-                      ## Changes in this release
-                      - Auto-generated release from GitHub Actions.
-                      - Commit: `${{ github.sha }}`
                   files: |
                       ./release-artifacts/${{ env.PROJECT_NAME }}
                       ./release-artifacts/${{ env.PROJECT_NAME }}.exe
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-            # - name: Release
-            #   uses: softprops/action-gh-release@v2
-            #   if: startsWith(github.ref, 'refs/tags/')
-            #   with:
-            #       name: Release ${{ github.ref }}
-            #       files: |
-            #           ./build/Windows/${{ env.PROJECT_NAME }}.exe
-            #           ./build/Linux/${{ env.PROJECT_NAME }}
+                  token: ${{ secrets.GH_TOKEN }}

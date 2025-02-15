@@ -83,6 +83,15 @@ int main(int argc, char **argv)
     bool force_update;
     get->add_flag("-f, --force_update", force_update, "force update the novel");
 
+    CLI::App *search = app.add_subcommand("search", "search novels");
+    string keyword;
+    search->add_option("keyword", keyword, "keyword to search")
+        ->required();
+    string site_id;
+    search->add_option("-s, --site_id", site_id, "ID of the plugin")
+        ->check(CLI::IsMember(site_ids))
+        ->required();
+
     // plugin subcommand
     CLI::App *plugin = app.add_subcommand("plugin", "manage plugins");
     plugin->add_subcommand("list", "list all plugins");
@@ -149,6 +158,24 @@ int main(int argc, char **argv)
             plugin->init(id, force_update);
             plugin->fetchAllChapter();
             plugin->getCover();
+        }
+    }
+    if (app.got_subcommand("search"))
+    {
+        fmt::print("Searching novels with keyword {} from {}\n", keyword, site_id);
+        auto &plugin = loader.getPlugin(site_id);
+        vector<string> search_result = plugin->search(keyword);
+        int page_size = 10;
+        int page = 1;
+        int total_pages = (search_result.size() + page_size - 1) / page_size;
+        while (page <= total_pages)
+        {
+            fmt::print("Page {}/{}:\n", page, total_pages);
+            for (int i = (page - 1) * page_size; i < page * page_size && i < search_result.size(); i++)
+            {
+                fmt::print("{}\n", search_result[i]);
+            }
+            page++;
         }
     }
     if (app.got_subcommand("plugin"))
