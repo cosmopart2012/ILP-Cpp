@@ -1,0 +1,8 @@
+{
+    "data_folder": "data",
+    "novels_folder": "novels",
+    "logs_folder": "logs",
+    "covers_folder": "covers",
+    "max_workers": "7",
+    "sleep_time": "5"
+}
