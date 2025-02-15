@@ -1,10 +1,17 @@
 cmake_minimum_required(VERSION 3.31)
 project(ILP VERSION 0.1.0 LANGUAGES C CXX)
 
+set(PROJECT_VERSION_MAJOR 1)
+set(PROJECT_VERSION_MINOR 0)
+set(PROJECT_VERSION_PATCH 0)
 
-# aux_source_directory(${PROJECT_SOURCE_DIR}/utils UTILS_SRC)
+set(PROJECT_VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
 
-# file(GLOB SCRAPERS_SRC "${PROJECT_SOURCE_DIR}/scrapers/*.cpp")
+configure_file(
+    "ilp_config.h.in"
+    "ilp_config.h"
+    @ONLY
+)
 
 set(CMAKE_CXX_STANDARD 17)
 

@@ -1,3 +1,5 @@
+#include "ilp_config.h"
+
 // #include <cpr/cpr.h>
 #include <fmt/core.h>
 #include <string>
@@ -63,6 +65,8 @@ int main(int argc, char **argv)
     }
 
     CLI::App app;
+
+    // get subcommand
     CLI::App *get = app.add_subcommand("get");
     CLI::App *chapter = get->add_subcommand("chapter", "download chapter");
     CLI::App *cover = get->add_subcommand("cover", "download cover");
@@ -79,6 +83,7 @@ int main(int argc, char **argv)
     bool force_update;
     get->add_flag("-f, --force_update", force_update, "force update the novel");
 
+    // plugin subcommand
     CLI::App *plugin = app.add_subcommand("plugin", "manage plugins");
     plugin->add_subcommand("list", "list all plugins");
     CLI::App *install = plugin->add_subcommand("install", "install a plugin");
@@ -100,6 +105,9 @@ int main(int argc, char **argv)
 
     disable->add_option("name", plugin_name, "name of the plugin")
         ->required();
+
+    CLI::App *version = app.add_subcommand("version", "show version");
+    version->require_subcommand(0, 1);
 
     CLI11_PARSE(app, argc, argv);
     if (app.got_subcommand("get"))
@@ -173,6 +181,10 @@ int main(int argc, char **argv)
         {
             manager.disablePlugin(plugin_name);
         }
+    }
+    if (app.got_subcommand("version"))
+    {
+        fmt::println("ILP-C++ version {}", PROJECT_VERSION);
     }
     return 0;
 }
