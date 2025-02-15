@@ -76,8 +76,8 @@ int main(int argc, char **argv)
     string id;
     get->add_option("id", id, "ID of the novel")
         ->required();
-    string site_id;
-    get->add_option("-s, --site_id", site_id, "ID of the plugin")
+    string site_id_get;
+    get->add_option("-s, --site_id", site_id_get, "ID of the plugin")
         ->check(CLI::IsMember(site_ids))
         ->required();
     bool force_update;
@@ -87,8 +87,8 @@ int main(int argc, char **argv)
     string keyword;
     search->add_option("keyword", keyword, "keyword to search")
         ->required();
-    string site_id;
-    search->add_option("-s, --site_id", site_id, "ID of the plugin")
+    string site_id_search;
+    search->add_option("-s, --site_id", site_id_search, "ID of the plugin")
         ->check(CLI::IsMember(site_ids))
         ->required();
 
@@ -121,40 +121,40 @@ int main(int argc, char **argv)
     CLI11_PARSE(app, argc, argv);
     if (app.got_subcommand("get"))
     {
-        if (find(site_ids.begin(), site_ids.end(), site_id) == site_ids.end())
+        if (find(site_ids.begin(), site_ids.end(), site_id_get) == site_ids.end())
         {
-            fmt::print("Invalid site_id: {}\n", site_id);
+            fmt::print("Invalid site_id: {}\n", site_id_get);
             return 0;
         }
         if (get->got_subcommand("chapter"))
         {
-            fmt::print("Downloading chapters of {} from {}\n", id, site_id);
-            auto &plugin = loader.getPlugin(site_id);
+            fmt::print("Downloading chapters of {} from {}\n", id, site_id_get);
+            auto &plugin = loader.getPlugin(site_id_get);
             plugin->init(id, force_update);
             plugin->fetchAllChapter();
         }
         else if (get->got_subcommand("cover"))
         {
-            fmt::print("Downloading cover of {} from {}\n", id, site_id);
+            fmt::print("Downloading cover of {} from {}\n", id, site_id_get);
             {
-                auto &plugin = loader.getPlugin(site_id);
+                auto &plugin = loader.getPlugin(site_id_get);
                 plugin->init(id, force_update);
                 plugin->getCover();
             }
         }
         else if (get->got_subcommand("author"))
         {
-            fmt::print("Getting author name of {} from {}\n", id, site_id);
+            fmt::print("Getting author name of {} from {}\n", id, site_id_get);
             {
-                auto &plugin = loader.getPlugin(site_id);
+                auto &plugin = loader.getPlugin(site_id_get);
                 plugin->init(id, force_update);
                 fmt::print("Author: {}\n", plugin->getAuthor());
             }
         }
         else if (get->got_subcommand("all"))
         {
-            fmt::print("Downloading all chapters and cover of {} from {}\n", id, site_id);
-            auto &plugin = loader.getPlugin(site_id);
+            fmt::print("Downloading all chapters and cover of {} from {}\n", id, site_id_get);
+            auto &plugin = loader.getPlugin(site_id_get);
             plugin->init(id, force_update);
             plugin->fetchAllChapter();
             plugin->getCover();
@@ -162,8 +162,8 @@ int main(int argc, char **argv)
     }
     if (app.got_subcommand("search"))
     {
-        fmt::print("Searching novels with keyword {} from {}\n", keyword, site_id);
-        auto &plugin = loader.getPlugin(site_id);
+        fmt::print("Searching novels with keyword {} from {}\n", keyword, site_id_search);
+        auto &plugin = loader.getPlugin(site_id_search);
         vector<string> search_result = plugin->search(keyword);
         int page_size = 10;
         int page = 1;
@@ -174,6 +174,25 @@ int main(int argc, char **argv)
             for (int i = (page - 1) * page_size; i < page * page_size && i < search_result.size(); i++)
             {
                 fmt::print("{}\n", search_result[i]);
+            }
+            string input;
+            fmt::println("输入 q 退出搜索，输入 n 翻页，输入数字跳转到指定页");
+            cin >> input;
+            if (input == "q")
+            {
+                break;
+            }
+            else if (input == "n")
+            {
+                page++;
+            }
+            else
+            {
+                page = stoi(input);
+                if (page < 1 || page > total_pages)
+                {
+                    fmt::println("输入 q 退出搜索，输入 n 翻页，输入数字跳转到指定页");
+                }
             }
             page++;
         }
