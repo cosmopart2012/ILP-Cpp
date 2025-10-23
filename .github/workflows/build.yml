@@ -25,76 +25,85 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install deps
+      - name: Install toolchain & system deps
         run: |
+          set -eux
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y \
             build-essential cmake git pkg-config patchelf \
             libssl-dev zlib1g-dev libcurl4-openssl-dev libsqlite3-dev
-          # 可选：如项目需要 fmt/cpr/SQLiteCpp 的较新版本，可源码装 shared 版：
-          # -- fmt (shared) --
+          # 若项目本身已自带/自动构建三方库，可删除下方三段源码安装
+
+      # ---- 如需较新共享库：fmt / cpr / SQLiteCpp（shared）----
+      - name: Build & install fmt (shared)
+        run: |
+          set -eux
           git clone https://github.com/fmtlib/fmt.git
-          cd fmt && git checkout 10.2.1
+          cd fmt
+          git checkout 10.2.1
           cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFMT_DOC=OFF -DFMT_TEST=OFF
           cmake --build build -j"$(nproc)"
           cmake --install build
-          cd ..
-          # -- cpr (shared) --
-          git clone https://github.com/libcpr/cpr.git
-          cd cpr && git submodule update --init --recursive
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCPR_USE_SYSTEM_CURL=ON -DCPR_ENABLE_SSL=ON
-          cmake --build build -j"$(nproc)"
-          cmake --install build
-          cd ..
-          # -- SQLiteCpp (shared, use system sqlite3) --
-          git clone https://github.com/SRombauts/SQLiteCpp.git
-          cd SQLiteCpp
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DSQLITECPP_INTERNAL_SQLITE=OFF -DSQLITECPP_BUILD_TESTS=OFF -DSQLITECPP_BUILD_EXAMPLES=OFF
-          cmake --build build -j"$(nproc)"
-          cmake --install build
-          cd ..
           ldconfig
 
-      # ---- 选择其一：如果你有 CMake Presets（Linux）用这个 ----
-      - name: Configure (preset)
-        if: hashFiles('.cmake', 'CMakePresets.json') != ''
-        run: cmake --preset=Linux
+      - name: Build & install cpr (shared, use system curl/openssl)
+        run: |
+          set -eux
+          git clone https://github.com/libcpr/cpr.git
+          cd cpr
+          git submodule update --init --recursive
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+                -DCPR_USE_SYSTEM_CURL=ON -DCPR_ENABLE_SSL=ON
+          cmake --build build -j"$(nproc)"
+          cmake --install build
+          ldconfig
 
-      - name: Build (preset)
-        if: hashFiles('.cmake', 'CMakePresets.json') != ''
-        run: cmake --build ./build/Linux -j --config Release
+      - name: Build & install SQLiteCpp (shared, use system sqlite3)
+        run: |
+          set -eux
+          git clone https://github.com/SRombauts/SQLiteCpp.git
+          cd SQLiteCpp
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+                -DSQLITECPP_INTERNAL_SQLITE=OFF -DSQLITECPP_BUILD_TESTS=OFF -DSQLITECPP_BUILD_EXAMPLES=OFF
+          cmake --build build -j"$(nproc)"
+          cmake --install build
+          ldconfig
 
-      # ---- 否则用标准 CMake（无 Presets 时）----
+      # ---- 用“标准 CMake”配置 & 构建（不使用 Presets）----
       - name: Configure (std)
-        if: hashFiles('CMakePresets.json') == ''
         run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 
       - name: Build (std)
-        if: hashFiles('CMakePresets.json') == ''
         run: cmake --build build --config Release --parallel
 
       - name: Prepare dist & bundle .so
         shell: bash
         run: |
-          set -e
+          set -eux
           mkdir -p dist/lib
-          # 把可执行复制到 dist（根据你的输出路径调整）
-          if [ -f "./build/Linux/${{ env.PROJECT_NAME }}" ]; then
-            cp "./build/Linux/${{ env.PROJECT_NAME }}" dist/ILP
-          elif [ -f "./build/${{ env.PROJECT_NAME }}" ]; then
-            cp "./build/${{ env.PROJECT_NAME }}" dist/ILP
+
+          # 尝试在常见输出位置寻找可执行文件名，若不同请改 PROJECT_NAME 或路径
+          if [ -f "build/${{ env.PROJECT_NAME }}" ]; then
+            cp "build/${{ env.PROJECT_NAME }}" dist/ILP
           else
-            # 尝试在 build/Release 下找
-            find build -maxdepth 2 -type f -executable -name "${{ env.PROJECT_NAME }}" -exec cp {} dist/ILP \; || true
+            # 递归寻找一个可执行文件名为 ILP 的目标
+            found=$(find build -type f -perm -111 -name "${{ env.PROJECT_NAME }}" | head -n1 || true)
+            if [ -z "$found" ]; then
+              echo "ERROR: Cannot find built executable named '${{ env.PROJECT_NAME }}' under build/"
+              exit 1
+            fi
+            cp "$found" dist/ILP
           fi
 
           chmod +x dist/ILP
-          # 自动收集依赖 so
+
+          # 自动收集依赖 .so 到 dist/lib
           ldd dist/ILP | awk '/=>/ && $3 ~ /^\// {print $3}' | xargs -I{} cp -n {} dist/lib/ || true
-          # 写入 RPATH 让程序到 $ORIGIN/lib 查找
+
+          # 写入 RPATH：让程序在自身 lib/ 下查找
           patchelf --set-rpath '$ORIGIN/lib' dist/ILP
 
-          echo "==== deps bundled ===="
+          echo "==== bundled libs ===="
           ls -l dist/lib || true
 
       - name: Upload Linux Artifact
@@ -124,20 +133,7 @@ jobs:
           vcpkg install cpr:x64-windows-static sqlite3:x64-windows-static fmt:x64-windows-static
         shell: pwsh
 
-      # ---- 有 Presets 用这个（确保 preset 使用 vcpkg toolchain & x64-windows-static）----
-      - name: Configure (preset)
-        if: hashFiles('CMakePresets.json') != ''
-        run: cmake --preset=Windows
-        shell: pwsh
-
-      - name: Build (preset)
-        if: hashFiles('CMakePresets.json') != ''
-        run: cmake --build ./build/Windows -j --config Release
-        shell: pwsh
-
-      # ---- 无 Presets 用标准 CMake ----
       - name: Configure (std)
-        if: hashFiles('CMakePresets.json') == ''
         run: >
           cmake -B build -S .
           -DCMAKE_BUILD_TYPE=Release
@@ -148,7 +144,6 @@ jobs:
         shell: pwsh
 
       - name: Build (std)
-        if: hashFiles('CMakePresets.json') == ''
         run: cmake --build build --config Release --parallel
         shell: pwsh
 
@@ -159,6 +154,7 @@ jobs:
           if (!(Test-Path $exe)) {
             $exe = Get-ChildItem -Path build -Recurse -Filter ILP.exe | Select-Object -First 1 | % { $_.FullName }
           }
+          if (!(Test-Path $exe)) { throw "Cannot find ILP.exe under build/" }
           Copy-Item $exe dist\ILP.exe
         shell: pwsh
 
@@ -168,7 +164,7 @@ jobs:
           name: Windows-${{ steps.commit-hash.outputs.short }}
           path: dist\ILP.exe
 
-  # ---------- Release 发布：把两端产物附到 Release ----------
+  # ---------- 发布：把两端产物附到 Release ----------
   release:
     needs: [build-linux-portable, build-windows-static]
     runs-on: ubuntu-latest
