@@ -1,93 +1,197 @@
 name: Build
 
 on:
-    push:
-        branches:
-            - main
-    pull_request:
-        branches:
-            - main
-    workflow_dispatch:
-    release:
-        types: [created] # 仅当创建 Release 时触发
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+  release:
+    types: [created]
 
 env:
-    PROJECT_NAME: ILP
+  PROJECT_NAME: ILP
 
 jobs:
-    build:
-        runs-on: ubuntu-latest
-        steps:
-            - id: commit-hash
-              uses: prompt/actions-commit-hash@v3
+  # ---------- LINUX 可移植构建（debian:12 基线） ----------
+  build-linux-portable:
+    runs-on: ubuntu-22.04
+    container:
+      image: debian:12
+    steps:
+      - id: commit-hash
+        uses: prompt/actions-commit-hash@v3
 
-            - name: Checkout code
-              uses: actions/checkout@v3
+      - name: Checkout
+        uses: actions/checkout@v4
 
-            - name: Setup Ninja
-              uses: ashutoshvarma/setup-ninja@master
-              with:
-                  version: 1.10.0
+      - name: Install deps
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            build-essential cmake git pkg-config patchelf \
+            libssl-dev zlib1g-dev libcurl4-openssl-dev libsqlite3-dev
+          # 可选：如项目需要 fmt/cpr/SQLiteCpp 的较新版本，可源码装 shared 版：
+          # -- fmt (shared) --
+          git clone https://github.com/fmtlib/fmt.git
+          cd fmt && git checkout 10.2.1
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DFMT_DOC=OFF -DFMT_TEST=OFF
+          cmake --build build -j"$(nproc)"
+          cmake --install build
+          cd ..
+          # -- cpr (shared) --
+          git clone https://github.com/libcpr/cpr.git
+          cd cpr && git submodule update --init --recursive
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCPR_USE_SYSTEM_CURL=ON -DCPR_ENABLE_SSL=ON
+          cmake --build build -j"$(nproc)"
+          cmake --install build
+          cd ..
+          # -- SQLiteCpp (shared, use system sqlite3) --
+          git clone https://github.com/SRombauts/SQLiteCpp.git
+          cd SQLiteCpp
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DSQLITECPP_INTERNAL_SQLITE=OFF -DSQLITECPP_BUILD_TESTS=OFF -DSQLITECPP_BUILD_EXAMPLES=OFF
+          cmake --build build -j"$(nproc)"
+          cmake --install build
+          cd ..
+          ldconfig
 
-            - name: Set up MinGW-w64
-              run: |
-                  sudo apt update
-                  sudo apt install -y mingw-w64
+      # ---- 选择其一：如果你有 CMake Presets（Linux）用这个 ----
+      - name: Configure (preset)
+        if: hashFiles('.cmake', 'CMakePresets.json') != ''
+        run: cmake --preset=Linux
 
-            # - name: Set up MinGW
-            #   uses: egor-tensin/setup-mingw@v2
+      - name: Build (preset)
+        if: hashFiles('.cmake', 'CMakePresets.json') != ''
+        run: cmake --build ./build/Linux -j --config Release
 
-            - name: Linux Build
-              run: |
-                  echo "Build with commit hash ${{ steps.commit-hash.outputs.short }}"
-                  cmake --preset=Linux
-                  cmake --build ./build/Linux -j --config Release
+      # ---- 否则用标准 CMake（无 Presets 时）----
+      - name: Configure (std)
+        if: hashFiles('CMakePresets.json') == ''
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 
-            - name: Windows Build
-              run: |
-                  echo "Build with commit hash ${{ steps.commit-hash.outputs.short }}"
-                  cmake --preset=Windows
-                  cmake --build ./build/Windows -j --config Release
+      - name: Build (std)
+        if: hashFiles('CMakePresets.json') == ''
+        run: cmake --build build --config Release --parallel
 
-            - name: Linux Artifact
-              uses: actions/upload-artifact@v4
-              with:
-                  name: Linux-${{ steps.commit-hash.outputs.short }}
-                  path: ./build/Linux/${{ env.PROJECT_NAME }}
+      - name: Prepare dist & bundle .so
+        shell: bash
+        run: |
+          set -e
+          mkdir -p dist/lib
+          # 把可执行复制到 dist（根据你的输出路径调整）
+          if [ -f "./build/Linux/${{ env.PROJECT_NAME }}" ]; then
+            cp "./build/Linux/${{ env.PROJECT_NAME }}" dist/ILP
+          elif [ -f "./build/${{ env.PROJECT_NAME }}" ]; then
+            cp "./build/${{ env.PROJECT_NAME }}" dist/ILP
+          else
+            # 尝试在 build/Release 下找
+            find build -maxdepth 2 -type f -executable -name "${{ env.PROJECT_NAME }}" -exec cp {} dist/ILP \; || true
+          fi
 
-            - name: Windows Artifact
-              uses: actions/upload-artifact@v4
-              with:
-                  name: Windows-${{ steps.commit-hash.outputs.short }}
-                  path: ./build/Windows/${{ env.PROJECT_NAME }}.exe
+          chmod +x dist/ILP
+          # 自动收集依赖 so
+          ldd dist/ILP | awk '/=>/ && $3 ~ /^\// {print $3}' | xargs -I{} cp -n {} dist/lib/ || true
+          # 写入 RPATH 让程序到 $ORIGIN/lib 查找
+          patchelf --set-rpath '$ORIGIN/lib' dist/ILP
 
-    release:
-        needs: build
-        runs-on: ubuntu-latest
-        if: startsWith(github.ref, 'refs/tags/')
-        steps:
-            - id: commit-hash
-              uses: prompt/actions-commit-hash@v3
+          echo "==== deps bundled ===="
+          ls -l dist/lib || true
 
-            - name: Download Linux Artifact
-              uses: actions/download-artifact@v4
-              with:
-                  name: Linux-${{ github.ref_name }}
-                  path: ./release-artifacts/
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Linux-${{ steps.commit-hash.outputs.short }}
+          path: dist/**
 
-            - name: Download Windows Artifact
-              uses: actions/download-artifact@v4
-              with:
-                  name: Windows-${{ github.ref_name }}
-                  path: ./release-artifacts/
+  # ---------- WINDOWS 静态构建（单文件 EXE） ----------
+  build-windows-static:
+    runs-on: windows-latest
+    steps:
+      - id: commit-hash
+        uses: prompt/actions-commit-hash@v3
 
-            - name: Create GitHub Release
-              uses: softprops/action-gh-release@v2
-              if: startsWith(github.ref, 'refs/tags/')
-              with:
-                  tag_name: ${{ github.ref_name }}
-                  name: "Release ${{ github.ref_name }}"
-                  files: |
-                      ./release-artifacts/${{ env.PROJECT_NAME }}
-                      ./release-artifacts/${{ env.PROJECT_NAME }}.exe
-                  token: ${{ secrets.GH_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+
+      - name: Install deps (static)
+        run: |
+          vcpkg install cpr:x64-windows-static sqlite3:x64-windows-static fmt:x64-windows-static
+        shell: pwsh
+
+      # ---- 有 Presets 用这个（确保 preset 使用 vcpkg toolchain & x64-windows-static）----
+      - name: Configure (preset)
+        if: hashFiles('CMakePresets.json') != ''
+        run: cmake --preset=Windows
+        shell: pwsh
+
+      - name: Build (preset)
+        if: hashFiles('CMakePresets.json') != ''
+        run: cmake --build ./build/Windows -j --config Release
+        shell: pwsh
+
+      # ---- 无 Presets 用标准 CMake ----
+      - name: Configure (std)
+        if: hashFiles('CMakePresets.json') == ''
+        run: >
+          cmake -B build -S .
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE="${{ env.VCPKG_ROOT }}\scripts\buildsystems\vcpkg.cmake"
+          -DVCPKG_TARGET_TRIPLET=x64-windows-static
+          -DBUILD_SHARED_LIBS=OFF
+          -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+        shell: pwsh
+
+      - name: Build (std)
+        if: hashFiles('CMakePresets.json') == ''
+        run: cmake --build build --config Release --parallel
+        shell: pwsh
+
+      - name: Collect Windows artifact
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $exe = Join-Path build 'Release\ILP.exe'
+          if (!(Test-Path $exe)) {
+            $exe = Get-ChildItem -Path build -Recurse -Filter ILP.exe | Select-Object -First 1 | % { $_.FullName }
+          }
+          Copy-Item $exe dist\ILP.exe
+        shell: pwsh
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows-${{ steps.commit-hash.outputs.short }}
+          path: dist\ILP.exe
+
+  # ---------- Release 发布：把两端产物附到 Release ----------
+  release:
+    needs: [build-linux-portable, build-windows-static]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download Linux Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Linux-${{ github.ref_name }}
+          path: ./release-artifacts/linux/
+
+      - name: Download Windows Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Windows-${{ github.ref_name }}
+          path: ./release-artifacts/windows/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "Release ${{ github.ref_name }}"
+          files: |
+            ./release-artifacts/linux/**
+            ./release-artifacts/windows/ILP.exe
+          token: ${{ secrets.GH_TOKEN }}
